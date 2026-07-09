@@ -1,0 +1,9 @@
+{
+  "name": "meteo-velo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "App météo multimodèle pour Simon - cyclisme, Ste-Foy/Québec",
+  "scripts": {
+    "dev": "netlify dev"
+  }
+}

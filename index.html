@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Météo Vélo">
+<meta name="theme-color" content="#0f172a">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https://api.open-meteo.com https://nominatim.openstreetmap.org; img-src 'none'; object-src 'none';">
+
+<title>Météo Vélo</title>
+<style>
+  :root {
+    --bg: #0f172a; --bg2: #1e293b; --bg3: #273449;
+    --text: #e2e8f0; --muted: #64748b; --faint: #334155;
+    --blue: #60a5fa; --green: #4ade80; --yellow: #fbbf24;
+    --red: #f87171; --orange: #fb923c; --purple: #a78bfa; --pink: #f472b6; --teal: #34d399;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    font-size: 14px; min-height: 100vh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .header {
+    background: var(--bg2); border-bottom: 1px solid var(--faint);
+    padding: 14px 16px 12px;
+    padding-top: calc(14px + env(safe-area-inset-top));
+    position: sticky; top: 0; z-index: 10;
+  }
+  .header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .header h1 { font-size: 19px; font-weight: 700; color: #f8fafc; }
+  .header .loc { font-size: 12px; color: var(--muted); margin-top: 3px; min-height: 16px; }
+  .header .updated { font-size: 10px; color: var(--faint); margin-top: 5px; }
+  .btn {
+    background: var(--bg3); border: 1px solid var(--faint);
+    color: var(--blue); border-radius: 8px; padding: 6px 11px;
+    font-size: 13px; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  .btn:active { opacity: 0.7; }
+  .banner {
+    margin: 12px 16px; border-radius: 12px; padding: 14px 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .banner.go   { background: #14532d55; border: 1px solid #4ade8066; }
+  .banner.warn { background: #78350f55; border: 1px solid #fbbf2466; }
+  .banner.nogo { background: #7f1d1d55; border: 1px solid #f8717166; }
+  .banner-icon { font-size: 28px; }
+  .banner-text h2 { font-size: 16px; font-weight: 700; }
+  .banner-text p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .go .banner-text h2   { color: var(--green); }
+  .warn .banner-text h2 { color: var(--yellow); }
+  .nogo .banner-text h2 { color: var(--red); }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 16px 12px; }
+  .badge { padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 600; font-family: 'SF Mono', monospace; }
+  .section-title {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1px; padding: 4px 16px 8px;
+  }
+  .table-wrap { overflow-x: auto; padding: 0 16px; margin-bottom: 20px; }
+  table { width: 100%; border-collapse: collapse; min-width: 360px; }
+  th {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.8px; font-weight: 500; padding: 6px 8px;
+    text-align: left; border-bottom: 1px solid var(--faint); white-space: nowrap;
+  }
+  td { padding: 10px 8px; border-bottom: 1px solid #1a2740; white-space: nowrap; }
+  tr.now { background: var(--bg2); }
+  tr.past td { opacity: 0.35; }
+  .hm { font-family: 'SF Mono', monospace; font-size: 13px; }
+  .hn { color: var(--blue); font-weight: 700; }
+  .hp { color: var(--faint); }
+  .temp { color: #f8fafc; font-weight: 500; }
+  .ph { color: var(--red);    font-weight: 700; }
+  .pm { color: var(--yellow); font-weight: 600; }
+  .pl { color: var(--green); }
+  .pw { color: var(--red); }
+  .pd { color: var(--muted); }
+  .wv { color: var(--muted); font-size: 12px; }
+  .vg { color: var(--green);  font-weight: 700; font-size: 12px; }
+  .vw { color: var(--yellow); font-weight: 700; font-size: 12px; }
+  .vn { color: var(--red);    font-weight: 700; font-size: 12px; }
+  .divbox { margin: 0 16px 20px; background: var(--bg2); border-radius: 12px; padding: 14px; }
+  .divrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .divrow:last-child { margin-bottom: 0; }
+  .divhour { font-family: 'SF Mono', monospace; font-size: 11px; color: var(--faint); width: 28px; flex-shrink: 0; }
+  .chip { font-size: 10px; font-family: 'SF Mono', monospace; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
+  .status {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 80px 20px; gap: 12px; color: var(--blue);
+  }
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--faint);
+    border-top-color: var(--blue); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .status p { font-size: 13px; color: var(--muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .err { margin: 20px 16px; background: #7f1d1d33; border: 1px solid var(--red); border-radius: 12px; padding: 16px; color: var(--red); font-size: 13px; line-height: 1.6; }
+
+  .alert-box { margin: 0 16px 12px; border-radius: 12px; padding: 12px 14px; border-left: 4px solid; }
+  .alert-warn  { background: #78350f44; border-color: #f97316; }
+  .alert-watch { background: #78350f33; border-color: #fbbf24; }
+  .alert-link  { display: block; margin: 0 16px 12px; background: var(--bg2); border: 1px solid var(--faint); border-radius: 12px; padding: 12px 14px; text-decoration: none; color: var(--muted); font-size: 12px; }
+  .alert-title { font-weight: 700; font-size: 13px; margin-bottom: 3px; }
+  .alert-desc  { font-size: 11px; color: var(--muted); line-height: 1.4; }
+  .footer { text-align: center; font-size: 10px; color: var(--faint); padding: 8px 16px 24px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-row">
+    <div>
+      <h1>🚴 Météo Vélo</h1>
+      <div class="loc" id="loc">Localisation…</div>
+    </div>
+    <button class="btn" onclick="start()">↻ Actualiser</button>
+  </div>
+  <div class="updated" id="updated"></div>
+</div>
+
+<div id="app">
+  <div class="status">
+    <div class="spinner"></div>
+    <p>Localisation GPS…</p>
+  </div>
+</div>
+
+<script>
+const FALLBACK = { lat: 46.8123, lon: -71.2145, name: 'Québec, Ste-Foy (fallback)' };
+
+const MODELS = [
+  { key: 'ecmwf_ifs025', label: 'ECMWF', w: 0.40, color: '#60a5fa' },
+  { key: 'gfs_seamless',  label: 'GFS',   w: 0.25, color: '#34d399' },
+  { key: 'icon_seamless', label: 'ICON',  w: 0.15, color: '#fb923c' },
+  { key: 'gem_seamless',  label: 'GEM',   w: 0.20, color: '#a78bfa' },
+];
+
+const WMO = {0:'☀️',1:'🌤',2:'⛅',3:'☁️',45:'🌫',48:'🌫',51:'🌦',53:'🌦',55:'🌧',61:'🌧',63:'🌧',65:'🌧',71:'🌨',73:'🌨',75:'❄️',80:'🌦',81:'🌧',82:'⛈',95:'⛈',96:'⛈',99:'⛈'};
+const WMO_DESC = {0:'Ensoleillé',1:'Peu nuageux',2:'Mi-nuageux',3:'Nuageux',45:'Brouillard',51:'Bruine légère',53:'Bruine',55:'Bruine forte',61:'Pluie légère',63:'Pluie',65:'Pluie forte',71:'Neige légère',73:'Neige',75:'Neige forte',80:'Averses légères',81:'Averses',82:'Averses fortes',95:'Orage',96:'Orage + grêle',99:'Orage violent'};
+
+function escapeHtml(str) {
+  return (str || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function verdict(pop, precip) {
+  if (pop >= 70 || precip > 1)   return { label:'❌ NO-GO',      cls:'vn', banner:'nogo', icon:'🚫', msg:`POP ${Math.round(pop)}% · ${precip.toFixed(2)}mm` };
+  if (pop >= 40 || precip > 0.2) return { label:'⚠️ Borderline', cls:'vw', banner:'warn', icon:'⚠️', msg:`POP ${Math.round(pop)}% · ${precip.toFixed(2)}mm` };
+  return                               { label:'✅ GO',           cls:'vg', banner:'go',   icon:'🚴', msg:`POP ${Math.round(pop)}% · Conditions favorables` };
+}
+
+function getLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(FALLBACK);
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, name: null }),
+      ()  => resolve(FALLBACK),
+      { timeout: 8000, maximumAge: 60000 }
+    );
+  });
+}
+
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=fr`);
+    const d = await r.json();
+    const a = d.address;
+    return [a.city || a.town || a.village || a.municipality, a.country].filter(Boolean).join(', ');
+  } catch { return `${lat.toFixed(3)}°N ${Math.abs(lon).toFixed(3)}°W`; }
+}
+
+async function fetchWeather(lat, lon) {
+  const keys = MODELS.map(m => m.key).join(',');
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
+    + `&hourly=temperature_2m,precipitation_probability,precipitation,windspeed_10m,weathercode`
+    + `&models=${keys}&timezone=auto&forecast_days=2`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+function buildRows(d) {
+  const now = new Date();
+  const nowH = now.getHours();
+  const today = now.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const rows = [];
+
+  d.hourly.time.forEach((t, i) => {
+    const [date, time] = t.split('T');
+    if (date !== today) return;
+    const h = parseInt(time);
+    let wT=0,wP=0,wPr=0,wW=0,tw=0;
+    const mv = {};
+    MODELS.forEach(m => {
+      const temp   = d.hourly[`temperature_2m_${m.key}`]?.[i];
+      const pop    = d.hourly[`precipitation_probability_${m.key}`]?.[i];
+      const precip = d.hourly[`precipitation_${m.key}`]?.[i];
+      const wind   = d.hourly[`windspeed_10m_${m.key}`]?.[i];
+      const wcode  = d.hourly[`weathercode_${m.key}`]?.[i];
+      if (temp == null) return;
+      wT  += temp*m.w; wP += (pop??0)*m.w; wPr += (precip??0)*m.w; wW += (wind??0)*m.w; tw += m.w;
+      mv[m.key] = { pop: Math.round(pop??0), precip: precip??0, wcode: wcode??0 };
+    });
+    if (!tw) return;
+    const wcode = mv[MODELS.find(m => mv[m.key])?.key]?.wcode ?? 0;
+    rows.push({ h, avgT:wT/tw, avgP:wP/tw, avgPr:wPr/tw, avgW:wW/tw, wcode, mv, isPast:h<nowH, isNow:h===nowH });
+  });
+  return rows;
+}
+
+
+async function fetchAlerts(lat, lon) {
+  // Anciennement un fetch direct vers weather.gc.ca — bloqué par le CORS
+  // (ECCC n'envoie pas Access-Control-Allow-Origin). Maintenant proxié
+  // par une fonction Netlify qui fait le fetch côté serveur.
+  try {
+    const r = await fetch('/.netlify/functions/eccc-alerts?region=qc-10', { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data.alerts && data.alerts.length ? data.alerts : null;
+  } catch { return null; }
+}
+
+async function fetchEcccWeather(cityCode = 'qc-133') {
+  // Prévision officielle ECCC (flux RSS, quasi temps réel) — deuxième
+  // source affichée en parallèle du multimodèle Open-Meteo pour cross-validation.
+  try {
+    const r = await fetch(`/.netlify/functions/eccc-weather?city=${encodeURIComponent(cityCode)}`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function start() {
+  document.getElementById('app').innerHTML = '<div class="status"><div class="spinner"></div><p>Localisation GPS…</p></div>';
+  document.getElementById('loc').textContent = 'Localisation…';
+  document.getElementById('updated').textContent = '';
+
+  try {
+    const pos = await getLocation();
+    document.getElementById('app').innerHTML = '<div class="status"><div class="spinner"></div><p>Récupération des modèles…</p></div>';
+
+    // Reverse geocode + weather + ECCC en parallèle
+    const [cityName, data, alerts, eccc] = await Promise.all([
+      pos.name ? Promise.resolve(pos.name) : reverseGeocode(pos.lat, pos.lon),
+      fetchWeather(pos.lat, pos.lon),
+      fetchAlerts(pos.lat, pos.lon),
+      fetchEcccWeather()
+    ]);
+
+    document.getElementById('loc').textContent = `📍 ${cityName}`;
+    document.getElementById('updated').textContent =
+      `Mis à jour : ${new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'})} HAE · Open-Meteo`;
+
+    const rows = buildRows(data);
+    const { lat, lon } = pos;
+    const now = new Date();
+    const nowH = now.getHours();
+    const curRow = rows.find(r => r.isNow) ?? rows.find(r => !r.isPast);
+    const curV = curRow ? verdict(curRow.avgP, curRow.avgPr) : null;
+
+    let html = '';
+
+    // Banner
+    if (curV && curRow) {
+      html += `<div class="banner ${curV.banner}">
+        <div class="banner-icon">${curV.icon}</div>
+        <div class="banner-text">
+          <h2>${curV.label}</h2>
+          <p>${nowH}h · ${WMO_DESC[curRow.wcode]??''} · ${curV.msg}</p>
+        </div>
+      </div>`;
+    }
+
+    // Alerts
+    if (alerts && alerts.length) {
+      alerts.forEach(a => {
+        const isWarn = a.title.toLowerCase().includes('avertissement') || a.title.toLowerCase().includes('warning');
+        html += `<div class="alert-box ${isWarn ? 'alert-warn' : 'alert-watch'}">
+          <div class="alert-title">🔔 ${a.title}</div>
+          <div class="alert-desc">${a.summary}…</div>
+        </div>`;
+      });
+    } else {
+      html += `<a class="alert-link" href="https://meteo.gc.ca/fr/location/index.html?coords=${pos.lat.toFixed(3)},${pos.lon.toFixed(3)}" target="_blank">🔔 Alertes ECCC — Vérifier ↗</a>`;
+    }
+
+    // Badges
+    html += '<div class="badges">';
+    MODELS.forEach(m => {
+      html += `<span class="badge" style="background:${m.color}20;border:1px solid ${m.color}50;color:${m.color}">${m.label} ${(m.w*100).toFixed(0)}%</span>`;
+    });
+    html += '</div>';
+
+    // Table
+    html += `<div class="section-title">Prévisions horaires — ${now.toLocaleDateString('fr-CA',{weekday:'long',day:'numeric',month:'long'})}</div>`;
+    html += '<div class="table-wrap"><table><thead><tr>';
+    ['Heure','','T°','POP','Préc.','Vent','Verdict'].forEach(h => html += `<th>${h}</th>`);
+    html += '</tr></thead><tbody>';
+
+    rows.forEach(r => {
+      const v = verdict(r.avgP, r.avgPr);
+      const rc = r.isNow ? 'now' : r.isPast ? 'past' : '';
+      const hc = r.isNow ? 'hm hn' : r.isPast ? 'hm hp' : 'hm';
+      html += `<tr class="${rc}">
+        <td class="${hc}">${String(r.h).padStart(2,'0')}h${r.isNow?' ◀':''}</td>
+        <td style="font-size:18px">${WMO[r.wcode]??'❓'}</td>
+        <td class="temp">${r.avgT.toFixed(1)}°</td>
+        <td class="${r.avgP>=70?'ph':r.avgP>=40?'pm':'pl'}">${Math.round(r.avgP)}%</td>
+        <td class="${r.avgPr>0.3?'pw':'pd'}">${r.avgPr.toFixed(2)}mm</td>
+        <td class="wv">${Math.round(r.avgW)} km/h</td>
+        <td class="${v.cls}">${v.label}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+
+    // Divergence — prochaines heures
+    const focusH = [nowH, nowH+1, nowH+2, nowH+3].filter(h => h <= 23);
+    if (focusH.some(h => rows.find(r => r.h === h))) {
+      html += '<div class="section-title">Divergence inter-modèles — prochaines heures</div><div class="divbox">';
+      focusH.forEach(h => {
+        const r = rows.find(x => x.h === h);
+        if (!r) return;
+        html += `<div class="divrow"><span class="divhour">${h}h</span>`;
+        MODELS.forEach(m => {
+          const v = r.mv[m.key];
+          if (!v) return;
+          html += `<span class="chip" style="color:${m.color};background:${m.color}18;border:1px solid ${m.color}30">${m.label} ${v.pop}% · ${v.precip.toFixed(2)}mm</span>`;
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Environnement Canada — source officielle en parallèle
+    if (eccc && (eccc.currentConditions || (eccc.forecast && eccc.forecast.length))) {
+      html += '<div class="section-title">Environnement Canada (référence officielle)</div><div class="divbox">';
+
+      if (eccc.currentConditions) {
+        html += `<div class="divrow" style="flex-direction:column;align-items:flex-start;gap:2px">
+          <strong style="font-size:12px">${escapeHtml(eccc.currentConditions.title)}</strong>
+          <span class="wv">${escapeHtml(eccc.currentConditions.summary)}</span>
+        </div>`;
+      }
+
+      const todayEccc = (eccc.forecast || [])[0];
+      if (todayEccc) {
+        html += `<div class="divrow" style="flex-direction:column;align-items:flex-start;gap:2px;margin-top:8px">
+          <strong style="font-size:12px">${escapeHtml(todayEccc.title)}</strong>
+          <span class="wv">${escapeHtml(todayEccc.summary)}</span>
+        </div>`;
+
+        // Divergence entre notre pondération multimodèle et le % officiel ECCC
+        if (todayEccc.pop != null && curRow) {
+          const spread = Math.abs(todayEccc.pop - curRow.avgP);
+          if (spread > 20) {
+            html += `<div class="alert-box alert-watch" style="margin-top:10px">
+              <div class="alert-title">⚠️ Écart modèle vs ECCC</div>
+              <div class="alert-desc">Multimodèle: ${Math.round(curRow.avgP)}% · ECCC: ${todayEccc.pop}% — écart de ${Math.round(spread)} points, confiance réduite.</div>
+            </div>`;
+          }
+        }
+      }
+
+      html += `<div class="wv" style="margin-top:8px;font-size:10px">Source : ${escapeHtml(eccc.source)} (${escapeHtml(eccc.cityCode)}) · récupéré ${new Date(eccc.fetchedAt).toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'})}</div>`;
+      html += '</div>';
+    }
+
+    html += `<div class="footer">Open-Meteo CC-BY 4.0 · ECMWF · GFS · ICON · GEM · Nominatim OSM · Environnement Canada</div>`;
+    document.getElementById('app').innerHTML = html;
+
+  } catch(e) {
+    document.getElementById('app').innerHTML =
+      `<div class="err">❌ Erreur : ${e.message}<br><br>Vérifie ta connexion internet et réessaie.</div>`;
+    document.getElementById('updated').textContent = 'Échec du chargement';
+  }
+}
+
+start();
+</script>
+</body>
+</html>
