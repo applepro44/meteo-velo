@@ -73,6 +73,16 @@ exports.handler = async (event) => {
         condition: h.condition?.fr ?? null,
       }));
 
+    const rawWarnings = p.warnings || [];
+    const warnings = rawWarnings.map((w) => ({
+      // Tous les champs texte de cette API sont structurés {en, fr} —
+      // on extrait le .fr ici pour que le front-end reçoive de simples
+      // chaînes, jamais des objets (bug corrigé : escapeHtml() plantait
+      // sur ces objets non extraits).
+      type: (w.type && w.type.fr) || (w.title && w.title.fr) || (typeof w.type === 'string' ? w.type : null) || 'Alerte',
+      description: (w.description && w.description.fr) || (w.summary && w.summary.fr) || (typeof w.description === 'string' ? w.description : '') || '',
+    }));
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -94,7 +104,7 @@ exports.handler = async (event) => {
             }
           : null,
         hourly,
-        warnings: p.warnings || [],
+        warnings,
       }),
     };
   } catch (err) {
