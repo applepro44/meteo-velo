@@ -152,13 +152,36 @@ function verdict(pop, precip) {
   return                               { label:'✅ GO',           cls:'vg', banner:'go',   icon:'🚴', msg:`POP ${Math.round(pop)}% · Conditions favorables` };
 }
 
-function getLocation() {
+const GEO_ERROR_MSG = {
+  1: 'Permission de localisation refusée',
+  2: 'Position GPS indisponible',
+  3: 'Délai dépassé (GPS trop lent à répondre)',
+};
+
+async function getLocation() {
+  if (!navigator.geolocation) {
+    return { ...FALLBACK, geoError: "Géolocalisation non supportée par ce navigateur" };
+  }
+
+  // Vérifie l'état de permission AVANT de déclencher la demande, pour
+  // savoir si iOS va même afficher le prompt ou si c'est déjà bloqué.
+  let permState = 'unknown';
+  try {
+    if (navigator.permissions && navigator.permissions.query) {
+      const status = await navigator.permissions.query({ name: 'geolocation' });
+      permState = status.state; // 'granted' | 'denied' | 'prompt'
+    }
+  } catch { /* Permissions API non supportée (ex: vieux Safari) — pas grave */ }
+
   return new Promise((resolve) => {
-    if (!navigator.geolocation) return resolve(FALLBACK);
     navigator.geolocation.getCurrentPosition(
       pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, name: null }),
-      ()  => resolve(FALLBACK),
-      { timeout: 8000, maximumAge: 60000 }
+      err => resolve({
+        ...FALLBACK,
+        geoError: GEO_ERROR_MSG[err.code] || err.message || 'Erreur GPS inconnue',
+        permState,
+      }),
+      { timeout: 8000, maximumAge: 0, enableHighAccuracy: true }
     );
   });
 }
@@ -262,6 +285,19 @@ async function start() {
     const curV = curRow ? verdict(curRow.avgP, curRow.avgPr) : null;
 
     let html = '';
+
+    // Diagnostic géoloc — affiche pourquoi le fallback est utilisé, au lieu de le cacher
+    if (pos.geoError) {
+      html += `<div class="alert-box alert-watch">
+        <div class="alert-title">📍 GPS non utilisé — ${escapeHtml(pos.geoError)}</div>
+        <div class="alert-desc">
+          État de permission détecté : <strong>${escapeHtml(pos.permState || 'inconnu')}</strong>.
+          ${pos.permState === 'denied'
+            ? 'Va dans Réglages → Confidentialité et sécurité → Service de localisation → Safari — Sites web, et remets à "Demander".'
+            : 'Vérifie que le Service de localisation est activé et que Safari a la permission pour ce site.'}
+        </div>
+      </div>`;
+    }
 
     // Banner
     if (curV && curRow) {
