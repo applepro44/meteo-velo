@@ -1,27 +1,37 @@
 // netlify/functions/eccc-weather.js
 //
-// Nouvelle donnée : la prévision officielle d'Environnement Canada
-// (flux RSS "quasi temps réel", délai max ~1 min selon la doc ECCC),
-// affichée en parallèle du modèle multimodèle Open-Meteo comme
-// deuxième source de vérité. Fetch côté serveur pour éviter le CORS.
+// Prévision officielle d'Environnement Canada — v2, basée sur l'API
+// GeoMet-OGC-API moderne (api.weather.gc.ca), qui remplace l'ancien
+// système RSS /rss/city/ (confirmé mort en juillet 2026).
 //
-// Le "code de ville" (ex: qc-133) est celui utilisé dans les URLs
-// publiques de meteo.gc.ca — PAS le site code interne du Datamart XML.
-// Il n'existe pas de code dédié pour le parc de la Jacques-Cartier;
-// qc-133 (Québec) est le point de référence stable le plus proche.
+// Avantages vs l'ancienne version RSS :
+// - Requête par coordonnées GPS directement, pas de code de ville à deviner
+// - JSON natif, pas de parsing XML/regex fragile
+// - Probabilité de précipitation horaire en vrai nombre (lop.value),
+//   pas besoin de l'extraire d'un texte libre
+// - Inclut aussi les alertes (warnings) dans la même réponse
+//
+// Doc : https://eccc-msc.github.io/open-data/msc-geomet/ogc_api_en/
+// Collection : citypageweather-realtime (expérimentale mais fonctionnelle,
+// vérifiée en direct le 9 juillet 2026 avec des données réelles)
 
-function decodeEntities(str) {
-  return (str || '')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+const DEFAULT_LAT = 46.7793; // Ste-Foy, Québec
+const DEFAULT_LON = -71.2825;
+const BBOX_PAD = 0.2; // degrés — assez large pour attraper un point même en zone peu dense
+
+function distanceSq(lat1, lon1, lat2, lon2) {
+  const dLat = lat1 - lat2;
+  const dLon = lon1 - lon2;
+  return dLat * dLat + dLon * dLon;
 }
 
 exports.handler = async (event) => {
-  const cityCode = (event.queryStringParameters && event.queryStringParameters.city) || 'qc-133';
-  const url = `https://weather.gc.ca/rss/city/${cityCode}_f.xml`;
+  const qp = event.queryStringParameters || {};
+  const lat = parseFloat(qp.lat) || DEFAULT_LAT;
+  const lon = parseFloat(qp.lon) || DEFAULT_LON;
+
+  const bbox = [lon - BBOX_PAD, lat - BBOX_PAD, lon + BBOX_PAD, lat + BBOX_PAD].join(',');
+  const url = `https://api.weather.gc.ca/collections/citypageweather-realtime/items?bbox=${bbox}&f=json&limit=10`;
 
   try {
     const res = await fetch(url, {
@@ -29,47 +39,62 @@ exports.handler = async (event) => {
     });
 
     if (!res.ok) {
-      return { statusCode: res.status, body: JSON.stringify({ error: `ECCC a répondu ${res.status}`, url }) };
+      return { statusCode: res.status, body: JSON.stringify({ error: `ECCC API a répondu ${res.status}`, url }) };
     }
 
-    const xml = await res.text();
+    const data = await res.json();
+    const features = data.features || [];
 
-    const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-    const titleRegex = /<title[^>]*>([\s\S]*?)<\/title>/;
-    const summaryRegex = /<summary[^>]*>([\s\S]*?)<\/summary>/;
-    const updatedMatch = xml.match(/<updated>([\s\S]*?)<\/updated>/);
-
-    const entries = [];
-    let match;
-    while ((match = entryRegex.exec(xml)) !== null) {
-      const block = match[1];
-      const title = (block.match(titleRegex)?.[1] || '').trim();
-      const summaryRaw = (block.match(summaryRegex)?.[1] || '').trim();
-      const summary = decodeEntities(summaryRaw)
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\n{2,}/g, '\n')
-        .trim();
-
-      const popMatch = summary.match(/(\d{1,3})\s*(?:%|pour cent)\s*(?:de\s*)?(?:probabilit[ée]|possibilit[ée])?\s*d[e']?\s*(?:averses|pluie|précipitations)/i);
-      const pop = popMatch ? parseInt(popMatch[1], 10) : null;
-
-      entries.push({ title, summary, pop });
+    if (features.length === 0) {
+      return { statusCode: 404, body: JSON.stringify({ error: 'Aucune station ECCC trouvée près de ces coordonnées', url }) };
     }
 
-    const currentConditions = entries.find((e) => /^condition/i.test(e.title)) || null;
-    const forecast = entries.filter((e) => e !== currentConditions);
+    let nearest = features[0];
+    let bestDist = Infinity;
+    for (const f of features) {
+      const [flon, flat] = f.geometry.coordinates;
+      const d = distanceSq(lat, lon, flat, flon);
+      if (d < bestDist) {
+        bestDist = d;
+        nearest = f;
+      }
+    }
+
+    const p = nearest.properties;
+    const cc = p.currentConditions || {};
+    const todayForecast = (p.forecastGroup && p.forecastGroup.forecasts && p.forecastGroup.forecasts[0]) || null;
+
+    const hourly = ((p.hourlyForecastGroup && p.hourlyForecastGroup.hourlyForecasts) || [])
+      .slice(0, 12)
+      .map((h) => ({
+        timestamp: h.timestamp,
+        temperature: h.temperature?.value?.fr ?? null,
+        pop: h.lop?.value?.fr ?? null,
+        condition: h.condition?.fr ?? null,
+      }));
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        source: 'Environnement Canada (weather.gc.ca RSS)',
-        cityCode,
+        source: 'Environnement Canada (GeoMet-OGC-API)',
+        stationName: p.name?.fr || null,
         fetchedAt: new Date().toISOString(),
-        updated: updatedMatch ? updatedMatch[1] : null,
-        currentConditions,
-        forecast,
+        currentConditions: {
+          temperature: cc.temperature?.value?.fr ?? null,
+          humidity: cc.relativeHumidity?.value?.fr ?? null,
+          windSpeed: cc.wind?.speed?.value?.fr ?? null,
+          windDirection: cc.wind?.direction?.value?.fr ?? null,
+        },
+        today: todayForecast
+          ? {
+              period: todayForecast.period?.textForecastName?.fr ?? null,
+              summary: todayForecast.textSummary?.fr ?? null,
+              cloudPrecip: todayForecast.cloudPrecip?.fr ?? null,
+            }
+          : null,
+        hourly,
+        warnings: p.warnings || [],
       }),
     };
   } catch (err) {

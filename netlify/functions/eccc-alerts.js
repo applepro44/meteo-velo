@@ -1,13 +1,27 @@
 // netlify/functions/eccc-alerts.js
 //
-// Remplace le fetch direct vers weather.gc.ca que faisait fetchAlerts()
-// dans index.html — ce fetch échouait probablement en silence à cause
-// du CORS (ECCC n'envoie généralement pas Access-Control-Allow-Origin).
-// Ici le fetch se fait côté serveur Netlify, donc pas de CORS possible.
+// v2 — utilise la même API GeoMet-OGC-API que eccc-weather.js (le champ
+// "warnings" est déjà inclus dans la réponse de cette collection).
+// Remplace l'ancien fetch RSS vers weather.gc.ca/rss/warning/ (même
+// système legacy que le RSS de prévisions, probablement mort aussi).
+
+const DEFAULT_LAT = 46.7793;
+const DEFAULT_LON = -71.2825;
+const BBOX_PAD = 0.2;
+
+function distanceSq(lat1, lon1, lat2, lon2) {
+  const dLat = lat1 - lat2;
+  const dLon = lon1 - lon2;
+  return dLat * dLat + dLon * dLon;
+}
 
 exports.handler = async (event) => {
-  const region = (event.queryStringParameters && event.queryStringParameters.region) || 'qc-10'; // région Québec
-  const url = `https://weather.gc.ca/rss/warning/${region}_f.xml`;
+  const qp = event.queryStringParameters || {};
+  const lat = parseFloat(qp.lat) || DEFAULT_LAT;
+  const lon = parseFloat(qp.lon) || DEFAULT_LON;
+
+  const bbox = [lon - BBOX_PAD, lat - BBOX_PAD, lon + BBOX_PAD, lat + BBOX_PAD].join(',');
+  const url = `https://api.weather.gc.ca/collections/citypageweather-realtime/items?bbox=${bbox}&f=json&limit=10`;
 
   try {
     const res = await fetch(url, {
@@ -15,38 +29,37 @@ exports.handler = async (event) => {
     });
 
     if (!res.ok) {
-      return { statusCode: res.status, body: JSON.stringify({ error: `ECCC a répondu ${res.status}`, url }) };
+      return { statusCode: res.status, body: JSON.stringify({ error: `ECCC API a répondu ${res.status}`, url }) };
     }
 
-    const xml = await res.text();
+    const data = await res.json();
+    const features = data.features || [];
 
-    const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-    const titleRegex = /<title[^>]*>([\s\S]*?)<\/title>/;
-    const summaryRegex = /<summary[^>]*>([\s\S]*?)<\/summary>/;
-
-    const alerts = [];
-    let match;
-    while ((match = entryRegex.exec(xml)) !== null) {
-      const block = match[1];
-      const title = (block.match(titleRegex)?.[1] || '').trim();
-      const summaryRaw = (block.match(summaryRegex)?.[1] || '').trim();
-      const summary = summaryRaw
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s{2,}/g, ' ')
-        .trim()
-        .slice(0, 200);
-
-      const lower = title.toLowerCase();
-      if (lower.includes('aucune') || lower.includes('no watch') || lower.includes('no alert')) continue;
-
-      alerts.push({ title, summary });
+    if (features.length === 0) {
+      return { statusCode: 200, body: JSON.stringify({ alerts: [] }) };
     }
+
+    let nearest = features[0];
+    let bestDist = Infinity;
+    for (const f of features) {
+      const [flon, flat] = f.geometry.coordinates;
+      const d = distanceSq(lat, lon, flat, flon);
+      if (d < bestDist) {
+        bestDist = d;
+        nearest = f;
+      }
+    }
+
+    const warnings = nearest.properties.warnings || [];
+    const alerts = warnings.map((w) => ({
+      title: w.type?.fr || w.title?.fr || 'Alerte',
+      summary: w.description?.fr || w.summary?.fr || '',
+    }));
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ region, fetchedAt: new Date().toISOString(), alerts }),
+      body: JSON.stringify({ fetchedAt: new Date().toISOString(), alerts }),
     };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: String(err), url }) };
