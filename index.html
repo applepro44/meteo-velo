@@ -213,22 +213,21 @@ function buildRows(d) {
 
 
 async function fetchAlerts(lat, lon) {
-  // Anciennement un fetch direct vers weather.gc.ca — bloqué par le CORS
-  // (ECCC n'envoie pas Access-Control-Allow-Origin). Maintenant proxié
-  // par une fonction Netlify qui fait le fetch côté serveur.
+  // v2 : utilise l'API GeoMet-OGC-API par coordonnées GPS plutôt que le
+  // flux RSS mort (weather.gc.ca/rss/warning/) — voir eccc-alerts.js
   try {
-    const r = await fetch('/.netlify/functions/eccc-alerts?region=qc-10', { signal: AbortSignal.timeout(5000) });
+    const r = await fetch(`/.netlify/functions/eccc-alerts?lat=${lat}&lon=${lon}`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) return null;
     const data = await r.json();
     return data.alerts && data.alerts.length ? data.alerts : null;
   } catch { return null; }
 }
 
-async function fetchEcccWeather(cityCode = 'qc-133') {
-  // Prévision officielle ECCC (flux RSS, quasi temps réel) — deuxième
-  // source affichée en parallèle du multimodèle Open-Meteo pour cross-validation.
+async function fetchEcccWeather(lat, lon) {
+  // v2 : API GeoMet-OGC-API par coordonnées GPS (remplace le flux RSS
+  // /rss/city/ mort, confirmé le 9 juillet 2026) — voir eccc-weather.js
   try {
-    const r = await fetch(`/.netlify/functions/eccc-weather?city=${encodeURIComponent(cityCode)}`, { signal: AbortSignal.timeout(5000) });
+    const r = await fetch(`/.netlify/functions/eccc-weather?lat=${lat}&lon=${lon}`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
@@ -248,7 +247,7 @@ async function start() {
       pos.name ? Promise.resolve(pos.name) : reverseGeocode(pos.lat, pos.lon),
       fetchWeather(pos.lat, pos.lon),
       fetchAlerts(pos.lat, pos.lon),
-      fetchEcccWeather()
+      fetchEcccWeather(pos.lat, pos.lon)
     ]);
 
     document.getElementById('loc').textContent = `📍 ${cityName}`;
@@ -335,37 +334,47 @@ async function start() {
       html += '</div>';
     }
 
-    // Environnement Canada — source officielle en parallèle
-    if (eccc && (eccc.currentConditions || (eccc.forecast && eccc.forecast.length))) {
-      html += '<div class="section-title">Environnement Canada (référence officielle)</div><div class="divbox">';
+    // Environnement Canada — source officielle en parallèle (API GeoMet, coordonnées GPS)
+    if (eccc && (eccc.currentConditions || eccc.today)) {
+      html += '<div class="section-title">Environnement Canada — ' + escapeHtml(eccc.stationName || '') + '</div><div class="divbox">';
 
-      if (eccc.currentConditions) {
+      if (eccc.currentConditions && eccc.currentConditions.temperature != null) {
+        const cc = eccc.currentConditions;
         html += `<div class="divrow" style="flex-direction:column;align-items:flex-start;gap:2px">
-          <strong style="font-size:12px">${escapeHtml(eccc.currentConditions.title)}</strong>
-          <span class="wv">${escapeHtml(eccc.currentConditions.summary)}</span>
+          <strong style="font-size:12px">Conditions actuelles</strong>
+          <span class="wv">${cc.temperature}°C · Humidité ${cc.humidity ?? '—'}% · Vent ${cc.windDirection ?? ''} ${cc.windSpeed ?? '—'} km/h</span>
         </div>`;
       }
 
-      const todayEccc = (eccc.forecast || [])[0];
-      if (todayEccc) {
+      if (eccc.today) {
         html += `<div class="divrow" style="flex-direction:column;align-items:flex-start;gap:2px;margin-top:8px">
-          <strong style="font-size:12px">${escapeHtml(todayEccc.title)}</strong>
-          <span class="wv">${escapeHtml(todayEccc.summary)}</span>
+          <strong style="font-size:12px">${escapeHtml(eccc.today.period || "Aujourd'hui")}</strong>
+          <span class="wv">${escapeHtml(eccc.today.summary || eccc.today.cloudPrecip || '')}</span>
         </div>`;
+      }
 
-        // Divergence entre notre pondération multimodèle et le % officiel ECCC
-        if (todayEccc.pop != null && curRow) {
-          const spread = Math.abs(todayEccc.pop - curRow.avgP);
-          if (spread > 20) {
-            html += `<div class="alert-box alert-watch" style="margin-top:10px">
-              <div class="alert-title">⚠️ Écart modèle vs ECCC</div>
-              <div class="alert-desc">Multimodèle: ${Math.round(curRow.avgP)}% · ECCC: ${todayEccc.pop}% — écart de ${Math.round(spread)} points, confiance réduite.</div>
-            </div>`;
-          }
+      // Divergence entre notre pondération multimodèle et le POP horaire officiel ECCC
+      const eccNextHour = (eccc.hourly || [])[0];
+      if (eccNextHour && eccNextHour.pop != null && curRow) {
+        const spread = Math.abs(eccNextHour.pop - curRow.avgP);
+        if (spread > 20) {
+          html += `<div class="alert-box alert-watch" style="margin-top:10px">
+            <div class="alert-title">⚠️ Écart modèle vs ECCC</div>
+            <div class="alert-desc">Multimodèle: ${Math.round(curRow.avgP)}% · ECCC (prochaine heure): ${eccNextHour.pop}% — écart de ${Math.round(spread)} points, confiance réduite.</div>
+          </div>`;
         }
       }
 
-      html += `<div class="wv" style="margin-top:8px;font-size:10px">Source : ${escapeHtml(eccc.source)} (${escapeHtml(eccc.cityCode)}) · récupéré ${new Date(eccc.fetchedAt).toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'})}</div>`;
+      if (eccc.warnings && eccc.warnings.length) {
+        eccc.warnings.forEach(w => {
+          html += `<div class="alert-box alert-warn" style="margin-top:10px">
+            <div class="alert-title">🔔 ${escapeHtml(w.type || w.title || 'Alerte')}</div>
+            <div class="alert-desc">${escapeHtml(w.description || w.summary || '')}</div>
+          </div>`;
+        });
+      }
+
+      html += `<div class="wv" style="margin-top:8px;font-size:10px">Source : ${escapeHtml(eccc.source)} · récupéré ${new Date(eccc.fetchedAt).toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'})}</div>`;
       html += '</div>';
     }
 
