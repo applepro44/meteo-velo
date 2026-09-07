@@ -82,6 +82,10 @@
   .vg { color: var(--green);  font-weight: 700; font-size: 12px; }
   .vw { color: var(--yellow); font-weight: 700; font-size: 12px; }
   .vn { color: var(--red);    font-weight: 700; font-size: 12px; }
+  .uv0 { color: var(--green); }
+  .uv1 { color: var(--orange); font-weight: 600; }
+  .uv2 { color: var(--red); font-weight: 700; }
+  .uv3 { color: #fff; background: #991b1b; padding: 1px 6px; border-radius: 4px; font-weight: 700; }
   .divbox { margin: 0 16px 20px; background: var(--bg2); border-radius: 12px; padding: 14px; }
   .divrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
   .divrow:last-child { margin-bottom: 0; }
@@ -152,6 +156,20 @@ function verdict(pop, precip) {
   return                               { label:'✅ GO',           cls:'vg', banner:'go',   icon:'🚴', msg:`POP ${Math.round(pop)}% · Conditions favorables` };
 }
 
+function uvClass(uv) {
+  if (uv >= 8) return 'uv3';
+  if (uv >= 6) return 'uv2';
+  if (uv >= 3) return 'uv1';
+  return 'uv0';
+}
+
+function uvAdvice(uv) {
+  if (uv >= 8) return 'éviter 11h-15h';
+  if (uv >= 6) return 'protection complète';
+  if (uv >= 3) return 'crème si 30min+';
+  return null;
+}
+
 const GEO_ERROR_MSG = {
   1: 'Permission de localisation refusée',
   2: 'Position GPS indisponible',
@@ -203,6 +221,31 @@ async function fetchWeather(lat, lon) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
+}
+
+async function fetchUV(lat, lon) {
+  // Indice UV — pas de ventilation par modèle (ECMWF/ICON/GEM n'en fournissent pas),
+  // requête séparée sur le modèle par défaut d'Open-Meteo (best_match, basé sur GFS)
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
+      + `&hourly=uv_index,uv_index_clear_sky&timezone=auto&forecast_days=2`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+function buildUvMap(uvData) {
+  const map = {};
+  if (!uvData || !uvData.hourly) return map;
+  const today = new Date().toLocaleDateString('en-CA');
+  uvData.hourly.time.forEach((t, i) => {
+    const [date, time] = t.split('T');
+    if (date !== today) return;
+    const h = parseInt(time);
+    map[h] = { uv: uvData.hourly.uv_index?.[i], uvClear: uvData.hourly.uv_index_clear_sky?.[i] };
+  });
+  return map;
 }
 
 function buildRows(d) {
@@ -265,12 +308,13 @@ async function start() {
     const pos = await getLocation();
     document.getElementById('app').innerHTML = '<div class="status"><div class="spinner"></div><p>Récupération des modèles…</p></div>';
 
-    // Reverse geocode + weather + ECCC en parallèle
-    const [cityName, data, alerts, eccc] = await Promise.all([
+    // Reverse geocode + weather + ECCC + UV en parallèle
+    const [cityName, data, alerts, eccc, uvData] = await Promise.all([
       pos.name ? Promise.resolve(pos.name) : reverseGeocode(pos.lat, pos.lon),
       fetchWeather(pos.lat, pos.lon),
       fetchAlerts(pos.lat, pos.lon),
-      fetchEcccWeather(pos.lat, pos.lon)
+      fetchEcccWeather(pos.lat, pos.lon),
+      fetchUV(pos.lat, pos.lon)
     ]);
 
     document.getElementById('loc').textContent = `📍 ${cityName}`;
@@ -278,6 +322,11 @@ async function start() {
       `Mis à jour : ${new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'})} HAE · Open-Meteo`;
 
     const rows = buildRows(data);
+    const uvMap = buildUvMap(uvData);
+    rows.forEach(r => {
+      const u = uvMap[r.h];
+      if (u) { r.uv = u.uv; r.uvClear = u.uvClear; }
+    });
     const { lat, lon } = pos;
     const now = new Date();
     const nowH = now.getHours();
@@ -301,11 +350,13 @@ async function start() {
 
     // Banner
     if (curV && curRow) {
+      const uvAdv = curRow.uv != null && curRow.uv >= 3 ? uvAdvice(curRow.uv) : null;
+      const uvPart = uvAdv ? ` · UV ${Math.round(curRow.uv)} — ${uvAdv}` : '';
       html += `<div class="banner ${curV.banner}">
         <div class="banner-icon">${curV.icon}</div>
         <div class="banner-text">
           <h2>${curV.label}</h2>
-          <p>${nowH}h · ${WMO_DESC[curRow.wcode]??''} · ${curV.msg}</p>
+          <p>${nowH}h · ${WMO_DESC[curRow.wcode]??''} · ${curV.msg}${uvPart}</p>
         </div>
       </div>`;
     }
@@ -333,7 +384,7 @@ async function start() {
     // Table
     html += `<div class="section-title">Prévisions horaires — ${now.toLocaleDateString('fr-CA',{weekday:'long',day:'numeric',month:'long'})}</div>`;
     html += '<div class="table-wrap"><table><thead><tr>';
-    ['Heure','','T°','POP','Préc.','Vent','Verdict'].forEach(h => html += `<th>${h}</th>`);
+    ['Heure','','T°','POP','Préc.','Vent','UV','Verdict'].forEach(h => html += `<th>${h}</th>`);
     html += '</tr></thead><tbody>';
 
     rows.forEach(r => {
@@ -347,6 +398,7 @@ async function start() {
         <td class="${r.avgP>=70?'ph':r.avgP>=40?'pm':'pl'}">${Math.round(r.avgP)}%</td>
         <td class="${r.avgPr>0.3?'pw':'pd'}">${r.avgPr.toFixed(2)}mm</td>
         <td class="wv">${Math.round(r.avgW)} km/h</td>
+        <td class="${r.uv != null ? uvClass(r.uv) : ''}">${r.uv != null ? Math.round(r.uv) + (r.uvClear != null && Math.round(r.uvClear) !== Math.round(r.uv) ? ` (${Math.round(r.uvClear)})` : '') : '—'}</td>
         <td class="${v.cls}">${v.label}</td>
       </tr>`;
     });
