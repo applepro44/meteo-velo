@@ -4,6 +4,7 @@
   "private": true,
   "description": "App météo multimodèle pour Simon - cyclisme, Ste-Foy/Québec",
   "scripts": {
-    "dev": "netlify dev"
+    "dev": "netlify dev",
+    "test": "node --test"
   }
 }
