@@ -366,8 +366,8 @@ async function start() {
       alerts.forEach(a => {
         const isWarn = a.title.toLowerCase().includes('avertissement') || a.title.toLowerCase().includes('warning');
         html += `<div class="alert-box ${isWarn ? 'alert-warn' : 'alert-watch'}">
-          <div class="alert-title">🔔 ${a.title}</div>
-          <div class="alert-desc">${a.summary}…</div>
+          <div class="alert-title">🔔 ${escapeHtml(a.title)}</div>
+          <div class="alert-desc">${escapeHtml(a.summary)}…</div>
         </div>`;
       });
     } else {
@@ -430,7 +430,7 @@ async function start() {
         const cc = eccc.currentConditions;
         html += `<div class="divrow" style="flex-direction:column;align-items:flex-start;gap:2px">
           <strong style="font-size:12px">Conditions actuelles</strong>
-          <span class="wv">${cc.temperature}°C · Humidité ${cc.humidity ?? '—'}% · Vent ${cc.windDirection ?? ''} ${cc.windSpeed ?? '—'} km/h</span>
+          <span class="wv">${escapeHtml(String(cc.temperature))}°C · Humidité ${escapeHtml(String(cc.humidity ?? '—'))}% · Vent ${escapeHtml(cc.windDirection ?? '')} ${escapeHtml(String(cc.windSpeed ?? '—'))} km/h</span>
         </div>`;
       }
 
