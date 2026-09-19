@@ -13,7 +13,7 @@
 <style>
   :root {
     --bg: #0f172a; --bg2: #1e293b; --bg3: #273449;
-    --text: #e2e8f0; --muted: #64748b; --faint: #334155;
+    --text: #e2e8f0; --muted: #94a3b8; --faint: #334155;
     --blue: #60a5fa; --green: #4ade80; --yellow: #fbbf24;
     --red: #f87171; --orange: #fb923c; --purple: #a78bfa; --pink: #f472b6; --teal: #34d399;
   }
@@ -33,7 +33,7 @@
   .header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .header h1 { font-size: 19px; font-weight: 700; color: #f8fafc; }
   .header .loc { font-size: 12px; color: var(--muted); margin-top: 3px; min-height: 16px; }
-  .header .updated { font-size: 10px; color: var(--faint); margin-top: 5px; }
+  .header .updated { font-size: 10px; color: var(--muted); margin-top: 5px; }
   .btn {
     background: var(--bg3); border: 1px solid var(--faint);
     color: var(--blue); border-radius: 8px; padding: 6px 11px;
@@ -68,10 +68,10 @@
   }
   td { padding: 10px 8px; border-bottom: 1px solid #1a2740; white-space: nowrap; }
   tr.now { background: var(--bg2); }
-  tr.past td { opacity: 0.35; }
+  tr.past td { opacity: 0.6; }
   .hm { font-family: 'SF Mono', monospace; font-size: 13px; }
   .hn { color: var(--blue); font-weight: 700; }
-  .hp { color: var(--faint); }
+  .hp { color: var(--muted); }
   .temp { color: #f8fafc; font-weight: 500; }
   .ph { color: var(--red);    font-weight: 700; }
   .pm { color: var(--yellow); font-weight: 600; }
@@ -89,7 +89,7 @@
   .divbox { margin: 0 16px 20px; background: var(--bg2); border-radius: 12px; padding: 14px; }
   .divrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
   .divrow:last-child { margin-bottom: 0; }
-  .divhour { font-family: 'SF Mono', monospace; font-size: 11px; color: var(--faint); width: 28px; flex-shrink: 0; }
+  .divhour { font-family: 'SF Mono', monospace; font-size: 11px; color: var(--muted); width: 28px; flex-shrink: 0; }
   .chip { font-size: 10px; font-family: 'SF Mono', monospace; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
   .status {
     display: flex; flex-direction: column; align-items: center;
@@ -111,6 +111,10 @@
   .alert-title { font-weight: 700; font-size: 13px; margin-bottom: 3px; }
   .alert-desc  { font-size: 11px; color: var(--muted); line-height: 1.4; }
   .footer { text-align: center; font-size: 10px; color: var(--faint); padding: 8px 16px 24px; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
 </style>
 </head>
 <body>
@@ -125,6 +129,8 @@
   </div>
   <div class="updated" id="updated"></div>
 </div>
+
+<div id="sr-status" class="sr-only" role="status" aria-live="polite"></div>
 
 <div id="app">
   <div class="status">
@@ -371,7 +377,7 @@ async function start() {
         </div>`;
       });
     } else {
-      html += `<a class="alert-link" href="https://meteo.gc.ca/fr/location/index.html?coords=${pos.lat.toFixed(3)},${pos.lon.toFixed(3)}" target="_blank">🔔 Alertes ECCC — Vérifier ↗</a>`;
+      html += `<a class="alert-link" href="https://meteo.gc.ca/fr/location/index.html?coords=${pos.lat.toFixed(3)},${pos.lon.toFixed(3)}" target="_blank" rel="noopener">🔔 Alertes ECCC — Vérifier <span class="sr-only">(ouvre dans un nouvel onglet)</span> ↗</a>`;
     }
 
     // Badges
@@ -384,7 +390,9 @@ async function start() {
     // Table
     html += `<div class="section-title">Prévisions horaires — ${now.toLocaleDateString('fr-CA',{weekday:'long',day:'numeric',month:'long'})}</div>`;
     html += '<div class="table-wrap"><table><thead><tr>';
-    ['Heure','','T°','POP','Préc.','Vent','UV','Verdict'].forEach(h => html += `<th>${h}</th>`);
+    ['Heure','Condition météo','T°','POP','Préc.','Vent','UV','Verdict'].forEach((h, i) => {
+      html += i === 1 ? `<th><span class="sr-only">${h}</span></th>` : `<th>${h}</th>`;
+    });
     html += '</tr></thead><tbody>';
 
     rows.forEach(r => {
@@ -393,7 +401,7 @@ async function start() {
       const hc = r.isNow ? 'hm hn' : r.isPast ? 'hm hp' : 'hm';
       html += `<tr class="${rc}">
         <td class="${hc}">${String(r.h).padStart(2,'0')}h${r.isNow?' ◀':''}</td>
-        <td style="font-size:18px">${WMO[r.wcode]??'❓'}</td>
+        <td style="font-size:18px" aria-label="${escapeHtml(WMO_DESC[r.wcode] || 'Condition inconnue')}">${WMO[r.wcode]??'❓'}</td>
         <td class="temp">${r.avgT.toFixed(1)}°</td>
         <td class="${r.avgP>=70?'ph':r.avgP>=40?'pm':'pl'}">${Math.round(r.avgP)}%</td>
         <td class="${r.avgPr>0.3?'pw':'pd'}">${r.avgPr.toFixed(2)}mm</td>
@@ -469,10 +477,16 @@ async function start() {
     html += `<div class="footer">Open-Meteo CC-BY 4.0 · ECMWF · GFS · ICON · GEM · Nominatim OSM · Environnement Canada</div>`;
     document.getElementById('app').innerHTML = html;
 
+    if (curV && curRow) {
+      document.getElementById('sr-status').textContent =
+        `Météo mise à jour pour ${cityName}. ${curV.label.replace(/[^\w\s-]/gu, '').trim()}, ${nowH}h, ${WMO_DESC[curRow.wcode]??''}.`;
+    }
+
   } catch(e) {
     document.getElementById('app').innerHTML =
       `<div class="err">❌ Erreur : ${e.message}<br><br>Vérifie ta connexion internet et réessaie.</div>`;
     document.getElementById('updated').textContent = 'Échec du chargement';
+    document.getElementById('sr-status').textContent = `Erreur de chargement de la météo : ${e.message}`;
   }
 }
 
