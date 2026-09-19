@@ -305,13 +305,19 @@ async function fetchEcccWeather(lat, lon) {
   } catch { return null; }
 }
 
+let currentRequestId = 0;
+
 async function start() {
+  const requestId = ++currentRequestId;
+  const isStale = () => requestId !== currentRequestId;
+
   document.getElementById('app').innerHTML = '<div class="status"><div class="spinner"></div><p>Localisation GPS…</p></div>';
   document.getElementById('loc').textContent = 'Localisation…';
   document.getElementById('updated').textContent = '';
 
   try {
     const pos = await getLocation();
+    if (isStale()) return;
     document.getElementById('app').innerHTML = '<div class="status"><div class="spinner"></div><p>Récupération des modèles…</p></div>';
 
     // Reverse geocode + weather + ECCC + UV en parallèle
@@ -322,6 +328,7 @@ async function start() {
       fetchEcccWeather(pos.lat, pos.lon),
       fetchUV(pos.lat, pos.lon)
     ]);
+    if (isStale()) return;
 
     document.getElementById('loc').textContent = `📍 ${cityName}`;
     document.getElementById('updated').textContent =
@@ -483,6 +490,7 @@ async function start() {
     }
 
   } catch(e) {
+    if (isStale()) return;
     document.getElementById('app').innerHTML =
       `<div class="err">❌ Erreur : ${e.message}<br><br>Vérifie ta connexion internet et réessaie.</div>`;
     document.getElementById('updated').textContent = 'Échec du chargement';
