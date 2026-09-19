@@ -15,49 +15,19 @@
 // Collection : citypageweather-realtime (expérimentale mais fonctionnelle,
 // vérifiée en direct le 9 juillet 2026 avec des données réelles)
 
-const DEFAULT_LAT = 46.7793; // Ste-Foy, Québec
-const DEFAULT_LON = -71.2825;
-const BBOX_PAD = 0.2; // degrés — assez large pour attraper un point même en zone peu dense
-
-function distanceSq(lat1, lon1, lat2, lon2) {
-  const dLat = lat1 - lat2;
-  const dLon = lon1 - lon2;
-  return dLat * dLat + dLon * dLon;
-}
+const { resolveLatLon, fetchNearestStation } = require('../lib/geomet');
 
 exports.handler = async (event) => {
-  const qp = event.queryStringParameters || {};
-  const lat = parseFloat(qp.lat) || DEFAULT_LAT;
-  const lon = parseFloat(qp.lon) || DEFAULT_LON;
-
-  const bbox = [lon - BBOX_PAD, lat - BBOX_PAD, lon + BBOX_PAD, lat + BBOX_PAD].join(',');
-  const url = `https://api.weather.gc.ca/collections/citypageweather-realtime/items?bbox=${bbox}&f=json&limit=10`;
+  const { lat, lon } = resolveLatLon(event.queryStringParameters);
 
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'MeteoVelo/1.0 (app perso, contact via GitHub repo)' },
-    });
+    const nearest = await fetchNearestStation(lat, lon);
 
-    if (!res.ok) {
-      return { statusCode: res.status, body: JSON.stringify({ error: `ECCC API a répondu ${res.status}`, url }) };
-    }
-
-    const data = await res.json();
-    const features = data.features || [];
-
-    if (features.length === 0) {
-      return { statusCode: 404, body: JSON.stringify({ error: 'Aucune station ECCC trouvée près de ces coordonnées', url }) };
-    }
-
-    let nearest = features[0];
-    let bestDist = Infinity;
-    for (const f of features) {
-      const [flon, flat] = f.geometry.coordinates;
-      const d = distanceSq(lat, lon, flat, flon);
-      if (d < bestDist) {
-        bestDist = d;
-        nearest = f;
-      }
+    if (!nearest) {
+      return {
+        statusCode: 404,
+        body: JSON.stringify({ error: 'Aucune station ECCC trouvée près de ces coordonnées' }),
+      };
     }
 
     const p = nearest.properties;
@@ -108,6 +78,10 @@ exports.handler = async (event) => {
       }),
     };
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: String(err), url }) };
+    console.error('eccc-weather error:', err);
+    return {
+      statusCode: err.statusCode || 500,
+      body: JSON.stringify({ error: 'Impossible de récupérer les données ECCC' }),
+    };
   }
 };
